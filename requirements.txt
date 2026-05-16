@@ -15,4 +15,3 @@ streamlit-option-menu
 streamlit-mic-recorder
 edge-tts
 pypdfium2
-opencv-python-headless

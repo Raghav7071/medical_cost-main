@@ -304,10 +304,90 @@ _CSS = f"""
         border-color: {SIGNAL} !important;
         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
     }}
+
+    /* Placeholder text — Streamlit's default is near-invisible against white.
+       Use a muted slate that reads as "hint" without disappearing. */
+    .stTextInput>div>div>input::placeholder,
+    .stNumberInput>div>div>input::placeholder,
+    .stTextArea textarea::placeholder,
+    .stDateInput>div>div>input::placeholder,
+    input[type="text"]::placeholder,
+    input[type="password"]::placeholder,
+    input[type="email"]::placeholder,
+    input[type="number"]::placeholder,
+    textarea::placeholder {{
+        color: #94A3B8 !important;
+        opacity: 1 !important;
+        font-weight: 400 !important;
+    }}
+    /* Selectbox "Choose an option" placeholder (when no value selected) */
+    .stSelectbox div[data-baseweb="select"] [class*="placeholder"],
+    .stSelectbox div[data-baseweb="select"] [class*="Placeholder"] {{
+        color: #94A3B8 !important;
+        opacity: 1 !important;
+    }}
+    /* st.chat_input placeholder */
+    [data-testid="stChatInput"] textarea::placeholder,
+    [data-testid="stChatInputTextArea"]::placeholder {{
+        color: #94A3B8 !important;
+        opacity: 1 !important;
+    }}
     .stSelectbox div[data-baseweb="select"] > div {{
         background: {SURFACE} !important;
         border: 1px solid {HAIRLINE} !important;
         border-radius: 8px !important;
+        color: {INK} !important;
+    }}
+    /* The actual selected value lives in a nested span — Streamlit's default
+       gives it low opacity so it reads as ghost text. Force full contrast. */
+    .stSelectbox div[data-baseweb="select"] [data-baseweb="select-arrow"] svg {{
+        color: {SUBTEXT} !important;
+    }}
+    .stSelectbox div[data-baseweb="select"] [aria-live="polite"],
+    .stSelectbox div[data-baseweb="select"] [class*="ValueContainer"] *,
+    .stSelectbox div[data-baseweb="select"] input,
+    .stSelectbox div[data-baseweb="select"] span {{
+        color: {INK} !important;
+        opacity: 1 !important;
+        font-size: 14px !important;
+        font-weight: 500 !important;
+    }}
+
+    /* Dropdown popover (rendered in a portal at the body root, NOT inside
+       .stSelectbox — that's why the parent rules above don't reach it). */
+    div[data-baseweb="popover"],
+    ul[role="listbox"],
+    div[role="listbox"] {{
+        background: {SURFACE} !important;
+    }}
+    div[data-baseweb="popover"] ul,
+    ul[role="listbox"] {{
+        background: {SURFACE} !important;
+        border: 1px solid {HAIRLINE} !important;
+        border-radius: 10px !important;
+        box-shadow: {SOFT_SHADOW} !important;
+        padding: 4px !important;
+    }}
+    div[data-baseweb="popover"] li,
+    ul[role="listbox"] li,
+    li[role="option"],
+    div[role="option"] {{
+        background: {SURFACE} !important;
+        color: {INK} !important;
+        font-size: 14px !important;
+        padding: 9px 12px !important;
+        border-radius: 6px !important;
+    }}
+    li[role="option"]:hover,
+    div[role="option"]:hover,
+    li[role="option"][aria-selected="true"],
+    div[role="option"][aria-selected="true"] {{
+        background: {TINT_BLUE} !important;
+        color: {INK} !important;
+    }}
+    li[role="option"] *,
+    div[role="option"] * {{
+        color: {INK} !important;
     }}
 
     /* labels above inputs */

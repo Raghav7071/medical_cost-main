@@ -211,14 +211,19 @@ _VOICE_CHAT_HTML = r"""
   const ECHO_WINDOW_MS = 1200;  // ignore user input within this window if it overlaps lastSpokenTail
   const RESTART_DELAY_MS = 500; // delay before mic reopens after TTS
 
-  // ---- voice barge-in (VAD while Maya is speaking) -----------------------
-  let bargeStream = null;        // live MediaStream used only for VAD
-  let bargeAudioCtx = null;      // shared AudioContext
-  let bargeAnalyser = null;      // AnalyserNode reading mic levels
-  let bargeRafId = null;         // requestAnimationFrame handle
-  let bargeAboveSince = 0;       // first ms timestamp RMS went above threshold
-  const VAD_RMS_THRESHOLD = 0.025;   // above ambient room noise w/ AEC on
-  const VAD_SUSTAIN_MS = 220;        // sustained voice activity required to barge in
+  // ---- voice barge-in via lexical echo suppression -----------------------
+  // While Maya is speaking we run a parallel SpeechRecognition. Whatever the
+  // mic hears gets compared word-by-word against what Maya is *currently*
+  // saying — if the words are hers, it's the speaker bleeding into the mic
+  // and we ignore it. If the words are different, it's real user speech and
+  // we cut her off.
+  let bargeRecognition = null;
+  let bargeRestartGuard = false;
+  let mayaSpokenWords = new Set();      // word set of Maya's current utterance
+  let mayaSpokenText = '';              // full normalized text she's speaking
+  // Short imperatives that should ALWAYS interrupt, even if they happen to
+  // appear in Maya's text (rare overlap is acceptable for hard stops).
+  const STOP_WORDS = ['stop', 'wait', 'pause', 'shut up', 'cancel', 'nope', 'enough', 'shush'];
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -350,70 +355,91 @@ _VOICE_CHAT_HTML = r"""
     recognition = null;
   }
 
-  // Start monitoring mic levels for sustained voice activity. If the user
-  // talks while Maya is speaking, we cancel her TTS and reopen recognition —
-  // standard "barge-in" behaviour. Browser AEC on the getUserMedia stream
-  // subtracts Maya's own audio so we don't bargein on her own voice.
-  async function startBargeInWatch() {
+  // Run a parallel SpeechRecognition during TTS. Whatever it hears gets
+  // checked against Maya's current text — if the words are hers, treat as
+  // echo. Otherwise it's the user, cut Maya off.
+  function startBargeInWatch() {
     stopBargeInWatch();
+    if (!SR) return;
     try {
-      bargeStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      const AC = window.AudioContext || window.webkitAudioContext;
-      bargeAudioCtx = new AC();
-      const source = bargeAudioCtx.createMediaStreamSource(bargeStream);
-      bargeAnalyser = bargeAudioCtx.createAnalyser();
-      bargeAnalyser.fftSize = 1024;
-      source.connect(bargeAnalyser);
-      const buf = new Float32Array(bargeAnalyser.fftSize);
-      bargeAboveSince = 0;
+      bargeRecognition = new SR();
+      bargeRecognition.continuous = true;
+      bargeRecognition.interimResults = true;
+      bargeRecognition.lang = 'en-US';
+      bargeRecognition.maxAlternatives = 1;
 
-      const tick = () => {
-        if (!speaking || !bargeAnalyser) return;
-        bargeAnalyser.getFloatTimeDomainData(buf);
-        let sumSq = 0;
-        for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
-        const rms = Math.sqrt(sumSq / buf.length);
-
-        const now = Date.now();
-        if (rms >= VAD_RMS_THRESHOLD) {
-          if (!bargeAboveSince) bargeAboveSince = now;
-          if (now - bargeAboveSince >= VAD_SUSTAIN_MS) {
-            // The user has been talking long enough — cut Maya off.
-            bargeIn();
-            return;
-          }
-        } else {
-          bargeAboveSince = 0;
+      bargeRecognition.onresult = (event) => {
+        if (!speaking) return;
+        // Look at the most recent (possibly interim) result.
+        const last = event.results[event.results.length - 1];
+        const text = (last[0] && last[0].transcript) ? last[0].transcript.trim() : '';
+        if (!text) return;
+        if (isUserSpeech(text)) {
+          bargeIn();
         }
-        bargeRafId = requestAnimationFrame(tick);
       };
-      bargeRafId = requestAnimationFrame(tick);
+
+      bargeRecognition.onerror = (e) => {
+        // 'no-speech' / 'aborted' are routine — silently let onend handle restart.
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+          // Permission denied — there's no way to barge in. Skip silently.
+          stopBargeInWatch();
+        }
+      };
+
+      bargeRecognition.onend = () => {
+        // Browsers auto-stop SR after ~60s. If Maya is still talking, restart.
+        if (speaking && bargeRecognition && !bargeRestartGuard) {
+          bargeRestartGuard = true;
+          setTimeout(() => {
+            bargeRestartGuard = false;
+            if (speaking && bargeRecognition) {
+              try { bargeRecognition.start(); } catch (e) {}
+            }
+          }, 80);
+        }
+      };
+
+      bargeRecognition.start();
     } catch (e) {
-      // Mic permission denied or not available — barge-in just won't work,
-      // but the rest of the conversation flow stays functional.
-      bargeStream = null;
+      // SR not available or already running — give up silently.
+      bargeRecognition = null;
     }
   }
 
   function stopBargeInWatch() {
-    if (bargeRafId) cancelAnimationFrame(bargeRafId);
-    bargeRafId = null;
-    bargeAboveSince = 0;
-    if (bargeStream) {
-      try { bargeStream.getTracks().forEach(t => t.stop()); } catch (e) {}
-      bargeStream = null;
+    if (!bargeRecognition) return;
+    try { bargeRecognition.onresult = null; bargeRecognition.onerror = null; bargeRecognition.onend = null; } catch (e) {}
+    try { bargeRecognition.abort(); } catch (e) {}
+    bargeRecognition = null;
+  }
+
+  // Decide whether captured text is real user speech or Maya's own echo.
+  // The rule: if most of the captured words appear in Maya's current utterance,
+  // it's echo. STOP_WORDS always cut her off regardless of overlap.
+  function isUserSpeech(captured) {
+    const norm = normalize(captured);
+    if (!norm) return false;
+
+    // Hard-stop imperatives — always interrupt.
+    for (const sw of STOP_WORDS) {
+      // Word-boundary match so 'stop' triggers but 'stoppage' doesn't.
+      const re = new RegExp('(^|\\s)' + sw + '($|\\s)');
+      if (re.test(norm)) return true;
     }
-    if (bargeAudioCtx) {
-      try { bargeAudioCtx.close(); } catch (e) {}
-      bargeAudioCtx = null;
-    }
-    bargeAnalyser = null;
+
+    // If captured text is a literal substring of what Maya is currently
+    // saying, it's almost certainly the speaker bleeding into the mic.
+    if (mayaSpokenText && mayaSpokenText.includes(norm)) return false;
+
+    // Word-level overlap with Maya's vocabulary.
+    const words = norm.split(' ').filter(w => w.length > 1);
+    if (!words.length) return false;
+    let mayaHits = 0;
+    for (const w of words) if (mayaSpokenWords.has(w)) mayaHits++;
+    const overlap = mayaHits / words.length;
+    // Strict echo threshold — if >= 60% of words match Maya's vocab, it's her.
+    return overlap < 0.6;
   }
 
   function bargeIn() {
@@ -476,6 +502,9 @@ _VOICE_CHAT_HTML = r"""
 
     speaking = true;
     lastSpokenTail = text.slice(-60);
+    // Capture Maya's vocabulary for the lexical echo filter.
+    mayaSpokenText = normalize(text);
+    mayaSpokenWords = new Set(mayaSpokenText.split(' ').filter(w => w.length > 1));
     skipBtn.classList.add('visible');
     setStatus('speaking', 'Maya is speaking — talk to interrupt.');
 

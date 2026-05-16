@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"rgb\\\\\\(|hsl\\\\\\(|#[a-f0-9]{3,6}\" /Users/raghavyadav/Desktop/temp.style.css)",
+      "Bash(awk -F',' '{print $10, $11, $12, $13, $14}')",
+      "Bash(awk '{costs[NR]=$1; total[NR]=$5} END {n=length\\(costs\\); printf \"Treatment_Cost: min=$%.0f, median=$%.0f, max=$%.0f\\\\n\", costs[1], costs[int\\(n/2\\)], costs[n]; printf \"Total_Cost: min=$%.0f, median=$%.0f, max=$%.0f\\\\n\", total[1], total[int\\(n/2\\)], total[n]}')",
+      "Bash(awk -F, 'NR==1{for\\(i=1;i<=NF;i++\\) print i\": \"$i} NR>1{for\\(i=10;i<=14;i++\\) costs[$i]++} END{}' /Users/raghavyadav/Desktop/medical_cost-main/dataset.csv)",
+      "Bash(python3 *)"
+    ]
+  }
+}
